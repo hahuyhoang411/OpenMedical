@@ -8,7 +8,7 @@ train_dataset = load_dataset("openlifescienceai/medqa", split='train')
 dev_dataset = load_dataset("openlifescienceai/medqa", split='dev')
 
 # Combine train and dev datasets
-combined_dataset = concatenate_datasets([train_dataset,dev_dataset])
+combined_dataset = concatenate_datasets([train_dataset, dev_dataset])
 
 # Inspect the combined dataset
 print(combined_dataset)
@@ -28,6 +28,21 @@ def split_question(question: str) -> tuple[str, str]:
     """
     sentences = question.split('. ')
     return ('. '.join(sentences[:-1]) + '.').strip(), sentences[-1].strip()
+
+def filter_image_words(example):
+    """
+    Filters out examples that contain image-related words in the question or options.
+    """
+    image_keywords = ['<img', 'image', 'picture']
+    text_fields = [example['data']['Question']] + list(example['data']['Options'].values())
+
+    for text in text_fields:
+        if any(keyword in str(text).lower() for keyword in image_keywords):
+            return False  # Reject example if image keyword is found
+    return True  # Keep example if no image keywords are found
+
+# Apply the image filter
+combined_dataset = combined_dataset.filter(filter_image_words, num_proc=32)
 
 # Apply the function to create new columns
 processed_dataset = combined_dataset.map(
@@ -87,10 +102,9 @@ valid_questions = processed_dataset.filter(lambda x: is_valid_question(x['Questi
 
 # Print statistics
 total = len(processed_dataset)
-valid = len()
+valid = len(valid_questions)
 print(f"\nTotal questions: {total}")
 print(f"Valid questions: {valid}")
 print(f"Percentage valid: {((valid)/total)*100:.2f}%")
 
-print(f"Pushing to Hub")
 valid_questions.push_to_hub("OpenMedical/medical-raw", "medqa")
