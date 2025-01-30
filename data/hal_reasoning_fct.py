@@ -65,6 +65,26 @@ def create_data_column(example):
     }
     return example
 
+def filter_examples(example):
+    """Filter examples based on image content and valid fields"""
+    # Check for image-related keywords in relevant fields
+    image_keywords = ['<img', 'image', 'picture']
+    has_image_content = any(
+        any(keyword in str(value).lower() for keyword in image_keywords)
+        for value in [
+            example['question'],
+            str(example['Options'])  # Check in the Options dictionary
+        ]
+    )
+
+    # Check for empty fields after transformation (ensure to do this after other transformations)
+    has_valid_fields = (
+        example['Question_formatted'].strip() != '' and
+        example['Final_answer'].strip() != ''
+    )
+
+    return not has_image_content and has_valid_fields
+
 def process_dataset():
     """Main processing function"""
     # Load dataset and tokenizer
@@ -86,6 +106,12 @@ def process_dataset():
     # Add split question columns
     dataset = dataset.map(
         add_split_question_columns,
+        num_proc=32
+    )
+
+    # Filter out examples with image content or invalid fields
+    dataset = dataset.filter(
+        filter_examples,
         num_proc=32
     )
 
