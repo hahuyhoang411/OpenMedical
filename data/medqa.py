@@ -93,4 +93,4 @@ print(f"Valid questions: {valid}")
 print(f"Percentage valid: {((valid)/total)*100:.2f}%")
 
 print(f"Pushing to Hub")
-valid_questions.push_to_hub("HoangHa/medical-raw", "medqa")
+valid_questions.push_to_hub("OpenMedical/medical-raw", "medqa")
