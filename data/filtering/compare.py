@@ -92,7 +92,87 @@ def process_dataset(dataset):
     processed_dataset = dataset.map(process_example, num_proc=32)
     return processed_dataset
 
-# Load and process the dataset
-dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-distil", split='train')
-processed_dataset = process_dataset(dataset)
-print(processed_dataset)
+def count_true_values(correctness_list):
+    # Ensure we only count up to 3 values
+    if len(correctness_list) > 3:
+        correctness_list = correctness_list[:3]
+    
+    # Count True values
+    return sum(1 for x in correctness_list if x is True)
+
+
+# Load dataset and process
+qwen7b_ins_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-ins", split='train')
+qwen7b_ins_dataset = process_dataset(dataset)
+deepnous8b_dataset = load_dataset("OpenMedical/m1-raw", "deepnous8b", split='train')
+deepnous8b_dataset = process_dataset(dataset)
+qwen7b_distil_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-distil", split='train')
+qwen7b_distil_dataset = process_dataset(dataset)
+
+# Apply the function to create new column for qwen7b_distil_dataset
+qwen7b_distil_dataset = qwen7b_distil_dataset.map(
+    lambda x: {'correctness_count': count_true_values(x['correctness'])}
+)
+
+# Apply the function to create new column for qwen7b_ins_dataset
+qwen7b_ins_dataset = qwen7b_ins_dataset.map(
+    lambda x: {'correctness_count': count_true_values(x['correctness'])}
+)
+
+# Apply the function to create new column for qwen7b_ins_dataset
+deepnous8b_dataset = deepnous8b_dataset.map(
+    lambda x: {'correctness_count': count_true_values(x['correctness'])}
+)
+
+# Create dictionary to track questions that should be filtered out
+questions_to_filter = set()
+
+# Check all three datasets for perfect scores (3/3)
+for idx in range(len(qwen7b_distil_dataset)):
+    distil_example = qwen7b_distil_dataset[idx]
+    ins_example = qwen7b_ins_dataset[idx]
+    deepnous_example = deepnous8b_dataset[idx]
+    
+    # Generate UUID using the question as key
+    uuid = hashlib.md5(str(distil_example['question']).encode()).hexdigest()
+    
+    # If any model got 3/3, add to filter set
+    if (distil_example['correctness_count'] > 1 or 
+        ins_example['correctness_count'] > 1 or 
+        deepnous_example['correctness_count'] > 1):
+        questions_to_filter.add(uuid)
+
+# Filter function
+def filter_questions(example):
+    uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+    return uuid not in questions_to_filter
+
+# Apply filtering to get final dataset
+filtered_dataset = qwen7b_distil_dataset.filter(filter_questions)
+
+# Print statistics
+print(f"Original dataset size: {len(qwen7b_distil_dataset)}")
+print(f"Number of questions filtered out: {len(questions_to_filter)}")
+print(f"Final dataset size: {len(filtered_dataset)}")
+
+
+# Verify the filtering worked as expected by checking a few examples
+print("\nVerification of first few examples:")
+for idx in range(min(3, len(filtered_dataset))):
+    example = filtered_dataset[idx]
+    question_uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+    print(f"\nQuestion {idx + 1}:")
+    print(f"UUID: {question_uuid}")
+    print(f"Correctness counts:")
+    print(f"- Distil: {example['correctness_count']}")
+    # Find corresponding examples in other datasets
+    ins_example = next(x for x in qwen7b_ins_dataset if hashlib.md5(str(x['question']).encode()).hexdigest() == question_uuid)
+    deepnous_example = next(x for x in deepnous8b_dataset if hashlib.md5(str(x['question']).encode()).hexdigest() == question_uuid)
+    print(f"- Ins: {count_true_values(ins_example['correctness'])}")
+    print(f"- Deepnous: {count_true_values(deepnous_example['correctness'])}")
+
+# Filter columns
+
+filtered_dataset = filtered_dataset.remove_columns(['generations', 'finish_reasons', 'api_metadata', 'correctness', 'correctness_count'])
+print(filtered_dataset)
+# filtered_dataset.push_to_hub("OpenMedical/medical-data-stage1")

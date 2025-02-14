@@ -148,3 +148,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Usage
+# python dedup.py     --dataset-name OpenMedical/m1-raw-qwen7b-distil     --uuid-column question     --text-column question     --output-dir dedup_qwen7b_distil     --save-cleaned
