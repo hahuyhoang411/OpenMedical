@@ -158,18 +158,22 @@ print(f"Final dataset size: {len(filtered_dataset)}")
 
 # Verify the filtering worked as expected by checking a few examples
 print("\nVerification of first few examples:")
-for idx in range(min(3, len(filtered_dataset))):
+for idx in range(min(20, len(filtered_dataset))):
     example = filtered_dataset[idx]
-    question_uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+    uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+    scores = question_scores[uuid]
+    
     print(f"\nQuestion {idx + 1}:")
-    print(f"UUID: {question_uuid}")
+    print(f"UUID: {uuid}")
+    print(f"Question: {scores['question']}")
     print(f"Correctness counts:")
-    print(f"- Distil: {example['correctness_count']}")
-    # Find corresponding examples in other datasets
-    ins_example = next(x for x in qwen7b_ins_dataset if hashlib.md5(str(x['question']).encode()).hexdigest() == question_uuid)
-    deepnous_example = next(x for x in deepnous8b_dataset if hashlib.md5(str(x['question']).encode()).hexdigest() == question_uuid)
-    print(f"- Ins: {count_true_values(ins_example['correctness'])}")
-    print(f"- Deepnous: {count_true_values(deepnous_example['correctness'])}")
+    print(f"- Distil: {scores['distil']}")
+    print(f"- Ins: {scores['ins']}")
+    print(f"- Deepnous: {scores['deepnous']}")
+    
+    # Additional verification
+    assert scores['distil'] <= 1 and scores['ins'] <= 1 and scores['deepnous'] <= 1, \
+        f"Found scores > 1: Distil={scores['distil']}, Ins={scores['ins']}, Deepnous={scores['deepnous']}"
 
 # Filter columns
 
