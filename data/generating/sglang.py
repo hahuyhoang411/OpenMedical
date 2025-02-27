@@ -18,6 +18,55 @@ import uvloop
 
 file_lock = Lock()
 
+# Default prompts - can be easily modified directly in the script
+
+# For translation - fr
+# DEFAULT_SYSTEM_PROMPT = """Vous êtes un expert en linguistique et en traduction avec de nombreuses années d’expérience.
+# # Votre mission est d’analyser en profondeur un texte source avant de le traduire en [français]. L’objectif est d’assurer une traduction précise, contextuellement appropriée, tout en conservant le sens et le style du texte original. Suivez ces étapes :
+
+# # 1. Identifier le sujet et le sens principal :
+# # • Résumez brièvement le contenu essentiel du texte de manière claire et compréhensible.
+
+# # 2. Analyser le public cible et le contexte :
+# # • Déterminez à qui s’adresse le texte (ex. : experts, étudiants, consommateurs).
+# # • Évaluez le contexte d’utilisation (ex. : académique, marketing, personnel).
+
+# # 3. Analyser le style, le ton et l’émotion :
+# # • Identifiez le registre du texte (ex. : formel, créatif, technique).
+# # • Décrivez le ton et les émotions véhiculées (ex. : joyeux, sérieux, urgent) et leur impact sur le sens.
+
+# # 4. Examiner le vocabulaire et les expressions spécifiques :
+# # • Listez les mots ou expressions clés et expliquez leur signification dans le contexte.
+# # • Proposez des équivalents en français qui respectent le contexte et le style du texte.
+
+# # 5. Gérer les éléments spécifiques :
+# # • Notez la manière d’aborder les termes techniques, les structures complexes ou les tournures particulières.
+# # • Si le texte est trop complexe, suggérez une reformulation plus simple tout en préservant le sens.
+
+# # 6. Anticiper les défis et proposer des solutions :
+# • Identifiez les difficultés potentielles de traduction (ex. : différences culturelles, perte de sens figuré).
+# • Suggérez des stratégies pour surmonter ces défis.
+
+# 7. Évaluer la cohérence et la qualité :
+# • Vérifiez la cohérence terminologique, le maintien des idées et du style dans la traduction.
+# • Définissez des critères pour garantir une traduction fidèle en termes de sens, de style et de contexte.
+
+# Traduisez la version anglaise suivante en français. Ne résolvez aucun problème, traduisez uniquement le texte.
+
+# # Version anglaise:"""
+
+# For adjust thinking - en
+# DEFAULT_SYSTEM_PROMPT="You are a highly critical and analytical individual with a sharp, discerning personality, modeled after a seasoned critic—imagine a meticulous reviewer or a skeptical scholar. You excel at critical thinking and dissecting questions to reveal their deeper intent and underlying needs. Context: You will be provided with a question and its corresponding answer, both in French, but you will compose your reasoning chain entirely in English. Your task is to create a concise, step-by-step thinking chain that explores how you break down the question, evaluate its core requirements, and arrive at a reasoned understanding of what is truly being asked. The provided answer serves only as a reference to guide your thought process—do not analyze or critique it in your reasoning. Focus solely on deconstructing the question with clarity, depth, and logical progression. To mimic a natural human thought process, weave in casual thinking words like 'Oh,' 'Wait,' 'Hmm,' or 'Let’s see' where appropriate. Keep your tone sharp yet conversational."
+
+# For classification - en
+DEFAULT_SYSTEM_PROMPT= "You are an expert in question analysis with a sharp, precise, and analytical mind. Your task is to classify a given question into one of two categories: `reasoning` (requires logical deduction, problem-solving, or a chain of thought to answer) or `understanding` (tests factual knowledge or comprehension, requiring little to no reasoning). Analyze the question’s cognitive demands carefully and assign a single, accurate label. Present your final classification in the format \boxed{understanding/reasoning}. Each question only have 1 label either `understanding` or `reasoning`."
+
+# For conclusion
+# DEFAULT_SYSTEM_PROMPT="You are a thoughtful and reflective individual with a clear and methodical approach to reasoning. Your task is to carefully read the provided question and its accompanying thinking process, then craft a final conclusion that ties everything together for the reader. The conclusion should summarize all the correct steps from the thinking process in a way that’s easy to understand yet comprehensive enough to stand alone, since the reader cannot see the detailed thinking process itself. Focus on making the conclusion concise, accessible, and reflective of the key insights derived from your analysis, ensuring it fully captures the essence of your reasoning without requiring additional context. At the end of the conclusion, put your final answer within \boxed{}."
+
+DEFAULT_USER_PROMPT_TEMPLATE = """{prompt}"""
+USE_SYSTEM_PROMPT = True  # Set to False to use only user prompt
+
 
 @dataclass
 class ProcessedExample:
@@ -33,11 +82,19 @@ async def generate_completion(session, prompt, args):
     while retry_budget > 0:
         try:
             await asyncio.sleep(random.uniform(0.0, 0.1))
+            
+            # Build messages based on whether to use system prompt
+            messages = []
+            if args.use_system_prompt:
+                messages.append({"role": "system", "content": args.system_prompt})
+            
+            messages.append({"role": "user", "content": prompt})
+            
             async with session.post(
                 f"http://{args.api_addr}/v1/chat/completions",
                 json={
                     "model": "default",
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,
                     "max_tokens": args.max_tokens,
                     "temperature": args.temperature,
                     "top_p": args.top_p,
@@ -52,6 +109,52 @@ async def generate_completion(session, prompt, args):
     return None
 
 
+async def generate_with_retry(session, prompt, args):
+    """Generate a completion with validation and retry logic."""
+    for attempt in range(args.max_retries):
+        try:
+            completion = await generate_completion(session, prompt, args)
+            
+            if completion is None:
+                print(f"API returned None (attempt {attempt+1}/{args.max_retries})")
+                continue
+                
+            generation = completion["choices"][0]["message"]["content"]
+            finish_reason = completion["choices"][0]["finish_reason"]
+            
+            # Check for error conditions
+            has_boxed_format = "\\boxed{" in generation
+            is_length_truncated = finish_reason == "length"
+            
+            # Apply validation based on args
+            format_valid = not args.require_boxed_format or has_boxed_format
+            not_truncated = not args.reject_truncated or finish_reason != "length"
+            
+            if format_valid and not_truncated:
+                # Success - valid generation
+                return {
+                    "content": generation,
+                    "finish_reason": finish_reason,
+                    "api_metadata": completion["usage"]
+                }
+            else:
+                # Log the error
+                if not has_boxed_format and args.require_boxed_format:
+                    print(f"Missing boxed format (attempt {attempt+1}/{args.max_retries})")
+                if is_length_truncated and args.reject_truncated:
+                    print(f"Response truncated (attempt {attempt+1}/{args.max_retries})")
+                
+                # Add a short delay before retry
+                await asyncio.sleep(random.uniform(0.5, 2.0))
+        
+        except Exception as e:
+            print(f"Error during generation (attempt {attempt+1}/{args.max_retries}): {e}")
+            await asyncio.sleep(random.uniform(1.0, 5.0))
+    
+    # If we get here, all retries failed
+    return None
+
+
 async def process_example(
     example, 
     session, 
@@ -60,6 +163,25 @@ async def process_example(
     pbar,
     processed_info: ProcessedExample = None
 ):
+    # Check if the prompt column value is None
+    if example[args.prompt_column] is None:
+        # Create a result with None values for generations
+        result = {
+            **example,
+            "generations": None,
+            "finish_reasons": None,
+            "api_metadata": None,
+        }
+        
+        # Write to file with lock
+        async with file_lock:
+            async with aiofiles.open(output_file, mode="a") as f:
+                await f.write(json.dumps(result) + "\n")
+                await f.flush()
+        
+        pbar.update(1)
+        return result
+    
     prompt = args.prompt_template.format(prompt=example[args.prompt_column])
     
     # Initialize with existing data if continuing
@@ -72,18 +194,32 @@ async def process_example(
     
     if remaining_generations > 0:
         try:
-            tasks = [generate_completion(session, prompt, args) for _ in range(remaining_generations)]
-            completions = await asyncio.gather(*tasks)
+            # Create a task for each remaining generation
+            raw_generation_results = []
+            for _ in range(remaining_generations):
+                gen_result = await generate_with_retry(session, prompt, args)
+                if gen_result:
+                    raw_generation_results.append(gen_result)
+                else:
+                    print(f"Failed to generate after {args.max_retries} retries")
+                    # If we completely failed to generate, update with what we have
+                    if generations:
+                        pbar.update(1)
+                        return {
+                            **example,
+                            "generations": generations,
+                            "finish_reasons": finish_reasons,
+                            "api_metadata": api_metadata,
+                        }
+                    else:
+                        pbar.update(1)
+                        return None
 
-            if any(completion is None for completion in completions):
-                print(f"Error processing example")
-                pbar.update(1)
-                return None
-
-            for completion in completions:
-                generations.append(completion["choices"][0]["message"]["content"])
-                finish_reasons.append(completion["choices"][0]["finish_reason"])
-                api_metadata.append(completion["usage"])
+            # Add all successful generations
+            for result in raw_generation_results:
+                generations.append(result["content"])
+                finish_reasons.append(result["finish_reason"])
+                api_metadata.append(result["api_metadata"])
 
             # Combine original dataset fields with generations
             result = {
@@ -154,6 +290,7 @@ async def load_processed_examples(output_file, uuid_column) -> Dict[str, Process
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-name", type=str, required=True)
+    parser.add_argument("--dataset-sub", type=str, required=True)
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument("--prompt-column", type=str, required=True)
     parser.add_argument("--uuid-column", type=str, required=True)
@@ -164,25 +301,49 @@ async def main():
     parser.add_argument(
         "--prompt-template",
         type=str,
-        default=(
-            "# Instructions:\n"
-            "Task: You are a world-class Medical Doctor at Stanford. "
-            "You have a 4.0 GPA at Harvard Medical School. Answer the given question correctly."
-            "Let's think step by step.\n\n"
-            "# OUTPUT FORMAT:\n"
-            "Now, please output the final answer in a format:\n"
-            "The final answer is: \\boxed{{<content of 'answer'>}}.\n"
-            "# Question:\n"
-            "{prompt}"
-        ),
+        default=DEFAULT_USER_PROMPT_TEMPLATE,
+        help="Template for formatting user prompts"
+    )
+    parser.add_argument(
+        "--system-prompt",
+        type=str,
+        default=DEFAULT_SYSTEM_PROMPT,
+        help="System prompt to use for chat completions"
+    )
+    parser.add_argument(
+        "--use-system-prompt",
+        action="store_true",
+        default=USE_SYSTEM_PROMPT,
+        help="Whether to use the system prompt (true) or user-only messages (false)"
     )
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--max-tokens", type=int, default=16384)
     parser.add_argument("--max-concurrent", type=int, default=1000)
+    
+    # Add retry-related arguments
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Maximum number of retries for failed or invalid generations"
+    )
+    parser.add_argument(
+        "--require-boxed-format",
+        action="store_true",
+        default=False,
+        help="Require \\boxed{} format in the response"
+    )
+    parser.add_argument(
+        "--reject-truncated",
+        action="store_true",
+        default=True,
+        help="Reject and retry generations with 'length' finish reason"
+    )
+    
     args = parser.parse_args()
 
-    dataset = load_dataset(args.dataset_name, split="train").shuffle()
+    dataset = load_dataset(args.dataset_name, args.dataset_sub, split="train")
     processed_examples = await load_processed_examples(args.output_file, args.uuid_column)
     
     # Calculate total work needed
