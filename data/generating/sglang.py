@@ -117,10 +117,7 @@ async def process_example(
                 
                 if not valid_response:
                     print(f"Failed to get valid response after {max_retries} attempts")
-                    # Store the last attempt even if invalid
-                    generations.append(generation)
-                    finish_reasons.append(completion["choices"][0]["finish_reason"])
-                    api_metadata.append(completion["usage"])
+                    raise Exception(f"Failed to get valid response after {max_retries} attempts")
 
             result = {
                 **example,
