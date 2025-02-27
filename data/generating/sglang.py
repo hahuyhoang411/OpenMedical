@@ -96,6 +96,22 @@ async def process_example(
                         finish_reasons.append(completion["choices"][0]["finish_reason"])
                         api_metadata.append(completion["usage"])
                     else:
+                        # Save invalid response
+                        invalid_result = {
+                            "uuid": example[args.uuid_column],
+                            "prompt": prompt,
+                            "generation": generation,
+                            "extracted_answer": extracted,
+                            "correct_option": example['correct_option'],
+                            "retry_count": retry_count
+                        }
+                        
+                        async with file_lock:
+                            invalid_file = f"{os.path.splitext(args.output_file)[0]}_invalid.jsonl"
+                            async with aiofiles.open(invalid_file, mode="a") as f:
+                                await f.write(json.dumps(invalid_result) + "\n")
+                                await f.flush()
+                        
                         retry_count += 1
                         print(f"Invalid response format, retrying ({retry_count}/{max_retries})")
                 
