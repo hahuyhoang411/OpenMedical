@@ -15,6 +15,8 @@ import aiofiles
 import aiohttp
 import uvloop
 
+from filtering.compare import compare_answer, extract_boxed_answer
+
 
 file_lock = Lock()
 
@@ -62,40 +64,54 @@ async def process_example(
 ):
     prompt = args.prompt_template.format(prompt=example[args.prompt_column])
     
-    # Initialize with existing data if continuing
     generations = processed_info.existing_generations if processed_info else []
     finish_reasons = processed_info.existing_finish_reasons if processed_info else []
     api_metadata = processed_info.existing_api_metadata if processed_info else []
     
-    # Calculate remaining generations needed
     remaining_generations = args.num_generations - len(generations)
+    max_retries = 3  # Maximum retries per generation
     
     if remaining_generations > 0:
         try:
-            tasks = [generate_completion(session, prompt, args) for _ in range(remaining_generations)]
-            completions = await asyncio.gather(*tasks)
+            for _ in range(remaining_generations):
+                valid_response = False
+                retry_count = 0
+                
+                while not valid_response and retry_count < max_retries:
+                    completion = await generate_completion(session, prompt, args)
+                    
+                    if completion is None:
+                        print("Error getting completion")
+                        break
+                        
+                    generation = completion["choices"][0]["message"]["content"]
+                    extracted = extract_boxed_answer(generation)
+                    is_valid = compare_answer(extracted, example['correct_option'])
+                    
+                    if is_valid:
+                        valid_response = True
+                        generations.append(generation)
+                        finish_reasons.append(completion["choices"][0]["finish_reason"])
+                        api_metadata.append(completion["usage"])
+                    else:
+                        retry_count += 1
+                        print(f"Invalid response format, retrying ({retry_count}/{max_retries})")
+                
+                if not valid_response:
+                    print(f"Failed to get valid response after {max_retries} attempts")
+                    # Store the last attempt even if invalid
+                    generations.append(generation)
+                    finish_reasons.append(completion["choices"][0]["finish_reason"])
+                    api_metadata.append(completion["usage"])
 
-            if any(completion is None for completion in completions):
-                print(f"Error processing example")
-                pbar.update(1)
-                return None
-
-            for completion in completions:
-                generations.append(completion["choices"][0]["message"]["content"])
-                finish_reasons.append(completion["choices"][0]["finish_reason"])
-                api_metadata.append(completion["usage"])
-
-            # Combine original dataset fields with generations
             result = {
-                **example,  # Preserve all original dataset fields
+                **example,
                 "generations": generations,
                 "finish_reasons": finish_reasons,
                 "api_metadata": api_metadata,
             }
 
-            # Write to file with lock
             async with file_lock:
-                # If continuing, we need to update the existing line
                 if processed_info and args.continue_incomplete:
                     await update_existing_line(output_file, example[args.uuid_column], result)
                 else:
@@ -105,8 +121,8 @@ async def process_example(
 
             pbar.set_postfix(active=len(pbar.active_tasks), refresh=False)
             pbar.update(1)
-
             return result
+
         except Exception as e:
             print(f"Error processing example: {e}")
             pbar.update(1)
