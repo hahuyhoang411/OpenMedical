@@ -15,8 +15,10 @@ import aiofiles
 import aiohttp
 import uvloop
 
-from filtering.compare import compare_answer, extract_boxed_answer
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+from filtering import extract_boxed_answer, compare_answer
 
 file_lock = Lock()
 
