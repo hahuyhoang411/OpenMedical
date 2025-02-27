@@ -98,7 +98,8 @@ async def process_example(
                     else:
                         # Save invalid response
                         invalid_result = {
-                            "uuid": example[args.uuid_column],
+                            "uuid": hashlib.md5(str(example[args.uuid_column]).encode()).hexdigest(),
+                            
                             "prompt": prompt,
                             "generation": generation,
                             "extracted_answer": extracted,
