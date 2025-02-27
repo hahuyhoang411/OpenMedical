@@ -99,7 +99,6 @@ async def process_example(
                         # Save invalid response
                         invalid_result = {
                             "uuid": hashlib.md5(str(example[args.uuid_column]).encode()).hexdigest(),
-                            
                             "prompt": prompt,
                             "generation": generation,
                             "extracted_answer": extracted,
