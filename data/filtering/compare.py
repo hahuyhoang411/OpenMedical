@@ -100,83 +100,83 @@ def count_true_values(correctness_list):
     # Count True values
     return sum(1 for x in correctness_list if x is True)
 
+if __name__ == "__main__":
+    # Load dataset and process
+    qwen7b_ins_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-ins", split='train')
+    qwen7b_ins_dataset = process_dataset(dataset)
+    deepnous8b_dataset = load_dataset("OpenMedical/m1-raw", "deepnous8b", split='train')
+    deepnous8b_dataset = process_dataset(dataset)
+    qwen7b_distil_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-distil", split='train')
+    qwen7b_distil_dataset = process_dataset(dataset)
 
-# Load dataset and process
-qwen7b_ins_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-ins", split='train')
-qwen7b_ins_dataset = process_dataset(dataset)
-deepnous8b_dataset = load_dataset("OpenMedical/m1-raw", "deepnous8b", split='train')
-deepnous8b_dataset = process_dataset(dataset)
-qwen7b_distil_dataset = load_dataset("OpenMedical/m1-raw", "qwen7b-distil", split='train')
-qwen7b_distil_dataset = process_dataset(dataset)
+    # Apply the function to create new column for qwen7b_distil_dataset
+    qwen7b_distil_dataset = qwen7b_distil_dataset.map(
+        lambda x: {'correctness_count': count_true_values(x['correctness'])}
+    )
 
-# Apply the function to create new column for qwen7b_distil_dataset
-qwen7b_distil_dataset = qwen7b_distil_dataset.map(
-    lambda x: {'correctness_count': count_true_values(x['correctness'])}
-)
+    # Apply the function to create new column for qwen7b_ins_dataset
+    qwen7b_ins_dataset = qwen7b_ins_dataset.map(
+        lambda x: {'correctness_count': count_true_values(x['correctness'])}
+    )
 
-# Apply the function to create new column for qwen7b_ins_dataset
-qwen7b_ins_dataset = qwen7b_ins_dataset.map(
-    lambda x: {'correctness_count': count_true_values(x['correctness'])}
-)
+    # Apply the function to create new column for qwen7b_ins_dataset
+    deepnous8b_dataset = deepnous8b_dataset.map(
+        lambda x: {'correctness_count': count_true_values(x['correctness'])}
+    )
 
-# Apply the function to create new column for qwen7b_ins_dataset
-deepnous8b_dataset = deepnous8b_dataset.map(
-    lambda x: {'correctness_count': count_true_values(x['correctness'])}
-)
+    # Create dictionary to track questions that should be filtered out
+    questions_to_filter = set()
 
-# Create dictionary to track questions that should be filtered out
-questions_to_filter = set()
+    # Check all three datasets for perfect scores (3/3)
+    for idx in range(len(qwen7b_distil_dataset)):
+        distil_example = qwen7b_distil_dataset[idx]
+        ins_example = qwen7b_ins_dataset[idx]
+        deepnous_example = deepnous8b_dataset[idx]
+        
+        # Generate UUID using the question as key
+        uuid = hashlib.md5(str(distil_example['question']).encode()).hexdigest()
+        
+        # If any model got 3/3, add to filter set
+        if (distil_example['correctness_count'] > 1 or 
+            ins_example['correctness_count'] > 1 or 
+            deepnous_example['correctness_count'] > 1):
+            questions_to_filter.add(uuid)
 
-# Check all three datasets for perfect scores (3/3)
-for idx in range(len(qwen7b_distil_dataset)):
-    distil_example = qwen7b_distil_dataset[idx]
-    ins_example = qwen7b_ins_dataset[idx]
-    deepnous_example = deepnous8b_dataset[idx]
-    
-    # Generate UUID using the question as key
-    uuid = hashlib.md5(str(distil_example['question']).encode()).hexdigest()
-    
-    # If any model got 3/3, add to filter set
-    if (distil_example['correctness_count'] > 1 or 
-        ins_example['correctness_count'] > 1 or 
-        deepnous_example['correctness_count'] > 1):
-        questions_to_filter.add(uuid)
+    # Filter function
+    def filter_questions(example):
+        uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+        return uuid not in questions_to_filter
 
-# Filter function
-def filter_questions(example):
-    uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
-    return uuid not in questions_to_filter
+    # Apply filtering to get final dataset
+    filtered_dataset = qwen7b_distil_dataset.filter(filter_questions)
 
-# Apply filtering to get final dataset
-filtered_dataset = qwen7b_distil_dataset.filter(filter_questions)
-
-# Print statistics
-print(f"Original dataset size: {len(qwen7b_distil_dataset)}")
-print(f"Number of questions filtered out: {len(questions_to_filter)}")
-print(f"Final dataset size: {len(filtered_dataset)}")
+    # Print statistics
+    print(f"Original dataset size: {len(qwen7b_distil_dataset)}")
+    print(f"Number of questions filtered out: {len(questions_to_filter)}")
+    print(f"Final dataset size: {len(filtered_dataset)}")
 
 
-# Verify the filtering worked as expected by checking a few examples
-print("\nVerification of first few examples:")
-for idx in range(min(20, len(filtered_dataset))):
-    example = filtered_dataset[idx]
-    uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
-    scores = question_scores[uuid]
-    
-    print(f"\nQuestion {idx + 1}:")
-    print(f"UUID: {uuid}")
-    print(f"Question: {scores['question']}")
-    print(f"Correctness counts:")
-    print(f"- Distil: {scores['distil']}")
-    print(f"- Ins: {scores['ins']}")
-    print(f"- Deepnous: {scores['deepnous']}")
-    
-    # Additional verification
-    assert scores['distil'] <= 1 and scores['ins'] <= 1 and scores['deepnous'] <= 1, \
-        f"Found scores > 1: Distil={scores['distil']}, Ins={scores['ins']}, Deepnous={scores['deepnous']}"
+    # Verify the filtering worked as expected by checking a few examples
+    print("\nVerification of first few examples:")
+    for idx in range(min(20, len(filtered_dataset))):
+        example = filtered_dataset[idx]
+        uuid = hashlib.md5(str(example['question']).encode()).hexdigest()
+        scores = question_scores[uuid]
+        
+        print(f"\nQuestion {idx + 1}:")
+        print(f"UUID: {uuid}")
+        print(f"Question: {scores['question']}")
+        print(f"Correctness counts:")
+        print(f"- Distil: {scores['distil']}")
+        print(f"- Ins: {scores['ins']}")
+        print(f"- Deepnous: {scores['deepnous']}")
+        
+        # Additional verification
+        assert scores['distil'] <= 1 and scores['ins'] <= 1 and scores['deepnous'] <= 1, \
+            f"Found scores > 1: Distil={scores['distil']}, Ins={scores['ins']}, Deepnous={scores['deepnous']}"
 
-# Filter columns
+    # Filter columns
 
-filtered_dataset = filtered_dataset.remove_columns(['generations', 'finish_reasons', 'api_metadata', 'correctness', 'correctness_count'])
-print(filtered_dataset)
-# filtered_dataset.push_to_hub("OpenMedical/medical-data-stage1")
+    filtered_dataset = filtered_dataset.remove_columns(['generations', 'finish_reasons', 'api_metadata', 'correctness', 'correctness_count'])
+    print(filtered_dataset)
+    # filtered_dataset.push_to_hub("OpenMedical/medical-data-stage1")

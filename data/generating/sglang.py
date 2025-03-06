@@ -15,6 +15,10 @@ import aiofiles
 import aiohttp
 import uvloop
 
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+from filtering import extract_boxed_answer
 
 file_lock = Lock()
 
@@ -109,7 +113,7 @@ async def generate_completion(session, prompt, args):
     return None
 
 
-async def generate_with_retry(session, prompt, args):
+async def generate_with_retry(example, session, prompt, args):
     """Generate a completion with validation and retry logic."""
     for attempt in range(args.max_retries):
         try:
@@ -123,7 +127,7 @@ async def generate_with_retry(session, prompt, args):
             finish_reason = completion["choices"][0]["finish_reason"]
             
             # Check for error conditions
-            has_boxed_format = "\\boxed{" in generation
+            has_boxed_format = extract_boxed_answer(generation) is not None
             is_length_truncated = finish_reason == "length"
             
             # Apply validation based on args
@@ -143,6 +147,20 @@ async def generate_with_retry(session, prompt, args):
                     print(f"Missing boxed format (attempt {attempt+1}/{args.max_retries})")
                 if is_length_truncated and args.reject_truncated:
                     print(f"Response truncated (attempt {attempt+1}/{args.max_retries})")
+                    
+                # Save invalid response
+                invalid_result = {
+                    "uuid": hashlib.md5(str(example[args.uuid_column]).encode()).hexdigest(),
+                    "prompt": prompt,
+                    "generation": generation,
+                    "retry_count": attempt
+                }
+                
+                async with file_lock:
+                    invalid_file = f"{os.path.splitext(args.output_file)[0]}_invalid.jsonl"
+                    async with aiofiles.open(invalid_file, mode="a") as f:
+                        await f.write(json.dumps(invalid_result) + "\n")
+                        await f.flush()
                 
                 # Add a short delay before retry
                 await asyncio.sleep(random.uniform(0.5, 2.0))
@@ -184,12 +202,10 @@ async def process_example(
     
     prompt = args.prompt_template.format(prompt=example[args.prompt_column])
     
-    # Initialize with existing data if continuing
     generations = processed_info.existing_generations if processed_info else []
     finish_reasons = processed_info.existing_finish_reasons if processed_info else []
     api_metadata = processed_info.existing_api_metadata if processed_info else []
     
-    # Calculate remaining generations needed
     remaining_generations = args.num_generations - len(generations)
     
     if remaining_generations > 0:
@@ -197,7 +213,7 @@ async def process_example(
             # Create a task for each remaining generation
             raw_generation_results = []
             for _ in range(remaining_generations):
-                gen_result = await generate_with_retry(session, prompt, args)
+                gen_result = await generate_with_retry(example, session, prompt, args)
                 if gen_result:
                     raw_generation_results.append(gen_result)
                 else:
@@ -223,15 +239,13 @@ async def process_example(
 
             # Combine original dataset fields with generations
             result = {
-                **example,  # Preserve all original dataset fields
+                **example,
                 "generations": generations,
                 "finish_reasons": finish_reasons,
                 "api_metadata": api_metadata,
             }
 
-            # Write to file with lock
             async with file_lock:
-                # If continuing, we need to update the existing line
                 if processed_info and args.continue_incomplete:
                     await update_existing_line(output_file, example[args.uuid_column], result)
                 else:
@@ -241,8 +255,8 @@ async def process_example(
 
             pbar.set_postfix(active=len(pbar.active_tasks), refresh=False)
             pbar.update(1)
-
             return result
+
         except Exception as e:
             print(f"Error processing example: {e}")
             pbar.update(1)

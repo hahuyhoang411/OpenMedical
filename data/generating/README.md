@@ -34,7 +34,7 @@ python -m sglang.launch_server \
 
 Run the following command to start generating synthetic answers:
 ```
-python sglang.py \
+python data/generating/sglang.py \
   --dataset-name "OpenMedical/medical-data-dedup" \
   --output-file "medical_data_generations.jsonl" \
   --prompt-column "question" \
@@ -44,3 +44,7 @@ python sglang.py \
   --max-tokens 16384 \
   --max-concurrent 200
 ```
+
+Result:
+- medical_data_generations.jsonl: Store all validated samples
+- medical_data_invalid.jsonl: Store all invalidated samples
